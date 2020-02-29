@@ -1,3 +1,4 @@
+import csv
 #Track word frequency
 from collections import Counter
 #Numpy is used for arrays for calculating edit distance
@@ -120,7 +121,7 @@ def remove_short_words(count_candidates, min_candidate_length = 4):
 
 #Words that are only used very infrequently on Twitter are probably typos or
 #not in common use.
-def remove_infrequent_words(count_candidates, min_cand_occurrences = 0):
+def remove_infrequent_words(count_candidates, min_cand_occurrences = 2):
     if min_cand_occurrences == 0:
         return count_candidates
     for v in list(count_candidates.keys()):
@@ -167,8 +168,6 @@ def remove_likely_compound_words(count_candidates, count_dictionary):
     compound_candidates = []
 
     for i,v in enumerate(sorted_candidates):
-        if i % 100 == 0:
-            print(i)
         if len(v) >= 6:
             #by only searching through a slice a sorted list for matching words
             #performance is greatly improved
@@ -228,6 +227,8 @@ def find_likely_source_words(count_candidates, count_dictionary):
         prefix = v[0:2]
         search_slice = sorted_dictionary.irange(prefix,str(prefix+'zzz'))
         for source in search_slice:
+            if len(source) < 3 or source[0:1] != prefix[0:1]:
+                continue
             score = local_distance(source, v) / len_v
             if counter == 25:
                 if score > candidates_w_sources[v][0][0][0]:
@@ -243,6 +244,8 @@ def find_likely_source_words(count_candidates, count_dictionary):
         vback = v[::-1]
         search_slice = rev_sorted_dictionary.irange(suffix,str(suffix+'zzz'))
         for source in search_slice:
+            if len(source) < 3 or source[0:1] != suffix[0:1]:
+                continue
             score = local_distance(source,vback) / len_v
             if counter == 25:
                 if score > candidates_w_sources[v][1][0][0]:
@@ -252,12 +255,12 @@ def find_likely_source_words(count_candidates, count_dictionary):
                 candidates_w_sources[v][1].add([score,source[::-1]])
                 counter += 1
 
-    for v in list(candidates_w_sources.keys()):
-        if (len(candidates_w_sources[v][0]) == 0
-        or len(candidates_w_sources[v][1]) == 0
-        or candidates_w_sources[v][0][-1][0] == 1
-        or candidates_w_sources[v][1][-1][0] == 1):
-            candidates_w_sources.pop(v)
+#    for v in list(candidates_w_sources.keys()):
+#        if (len(candidates_w_sources[v][0]) == 0
+#        or len(candidates_w_sources[v][1]) == 0
+#        or candidates_w_sources[v][0][-1][0] == 1
+#        or candidates_w_sources[v][1][-1][0] == 1):
+#            candidates_w_sources.pop(v)
 
     return candidates_w_sources
 
@@ -268,28 +271,56 @@ def rank_performance_against_true_answers(candidates_w_sources, true_answers):
 
     for v in true_answers:
         if v[0] in candidates_w_sources:
-                answer = v[0]
+            if len(candidates_w_sources[v[0]]):
+                continue
+            answer = v[0]
 
-                start_rank = 0
-                start_word = v[1]
+            start_rank = 0
+            start_word = v[1]
 
+            if len(candidates_w_sources[v[0]][0]) > 0:
                 for n, m in enumerate(candidates_w_sources[v[0]][0]):
                     if start_word == m[1]:
                         start_rank = 1/(len(candidates_w_sources[v[0]][0]) - n)
                         break
 
-                end_rank = 0
-                end_word = v[2]
+            end_rank = 0
+            end_word = v[2]
 
+            if len(candidates_w_sources[v[0]][1]) > 0:
                 for n, m in enumerate(candidates_w_sources[v[0]][1]):
                     if end_word == m[1]:
                         end_rank = 1/(len(candidates_w_sources[v[0]][1]) - n)
                         break
 
-                scored_results[v[0]] = (start_rank + end_rank) / 2
+            scored_results[v[0]] = (start_rank + end_rank) / 2
 
     return scored_results
 
+#write results to CSV and Pickle formats
+def write_results(candidates_w_sources, true_answers = None):
+    pwrite('results\\candidates_w_sources.txt',list(candidates_w_sources.items()))
+    with open('results\\candidates_w_sources.csv', 'w', newline ="") as csvfile:
+        csvwriter = csv.writer(csvfile)
+        for item in pread('results\\candidates_w_sources.txt'):
+            for prefix in item[1][0]:
+                csvwriter.writerow([item[0],'prefix',prefix[0],prefix[1]])
+            for suffix in item[1][1]:
+                csvwriter.writerow([item[0],'suffix',suffix[0],suffix[1]])
+    with open('results\\candidates_w_sources_best_only.csv', 'w', newline ="") as csvfile:
+        csvwriter = csv.writer(csvfile)
+        for item in pread('results\\candidates_w_sources.txt'):
+            csvwriter.writerow([item[0],'prefix',item[1][0][0][0],item[1][0][0][1]])
+            csvwriter.writerow([item[0],'suffix',item[1][1][0][0],item[1][1][0][1]])
+
+    if true_answers is not None:
+        print("rank_performance_against_true_answers")
+        scored_results = rank_performance_against_true_answers(candidates_w_sources, true_answers)
+        pwrite('results\\rank_performance_against_true_answers.txt', scored_results)
+        with open('results\\rank_performance_against_true_answers.csv', 'w', newline ="") as csvfile:
+            csvwriter = csv.writer(csvfile)
+            for key, value in (pread('results\\rank_performance_against_true_answers.txt').items()):
+                csvwriter.writerow([key,value])
 
 
 ######################
@@ -430,7 +461,7 @@ count_candidates_case = Counter(words)
 count_dictionary = dict()
 for v in dictionary:
     count_dictionary[v] = count_candidates.get(v,0)
-	
+
 print("remove_short_words")
 count_candidates = remove_short_words(count_candidates)
 print("remove_infrequent_words")
@@ -445,9 +476,8 @@ print("remove_likely_typos")
 count_candidates = remove_likely_typos(count_candidates, count_dictionary)
 print("find_likely_source_words")
 candidates_w_sources = find_likely_source_words(count_candidates, count_dictionary)
-pwrite('results\\candidates_w_sources.txt',list(candidates_w_sources.items()))
-
+print("write_results")
 if true_answers is not None:
-    print("rank_performance_against_true_answers")
-    scored_results = rank_performance_against_true_answers(candidates_w_sources, true_answers)
-    pwrite('results\\rank_performance_against_true_answers.txt', scored_results)
+    write_results(candidates_w_sources, true_answers)
+else:
+    write_results(candidates_w_sources)
